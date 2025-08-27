@@ -1,4 +1,4 @@
-Working:
+GOOD:
 
 "What is the most recent blog about?"
 "What is the most recent blog?"
@@ -12,6 +12,17 @@ Working:
 
 
 
+TODO:
+"show me posts about..." (way less output)
+"show me articles about..." (way better output) give different output layouts, make these same
+ - posts / articles should be the same meaning
+ - What made them different outputs, and why was "posts" stricter?
+
+
+"Show me all Bitovi articles about DevOps"
+    ugly output on "all" keyword - make this say "here is a list of sources to all about ____" 
+                                - and have the exact "sources" output it has currently
+
 
 
 
@@ -22,8 +33,6 @@ Not Working / suspicious:
     Only shows 1 articles about node.js, maybe show some with keyword cloud, architecture?
 
 
-"Show me all Bitovi articles about DevOps"
-    ugly output
 
 
 

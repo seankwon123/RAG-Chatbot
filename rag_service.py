@@ -184,6 +184,53 @@ class RagService:
             return self._short(self._ollama_summarize(retrieved.title, content), 320)
         return ""
 
+    def _normalize_query(self, q: str) -> dict:
+        """
+        Strip brand/intent fluff so retrieval focuses on the topical bits.
+        Also returns a keyword list we can use for SQL matching.
+        """
+        q0 = (q or "").lower()
+
+        import re
+        q0 = re.sub(r"[^a-z0-9\s\-]+", " ", q0)
+        raw = [t for t in q0.split() if t]
+
+        # remove words that add noise ("bitovi", "recommend", "what", "show", …)
+        stop = {
+            "bitovi","blog","blogs","article","articles","post","posts",
+            "recommend","recommends","recommendation","recommendations",
+            "suggest","suggests","suggestion","suggestions",
+            "does","do","did","kind","kinds","type","types","what","which",
+            "show","me","about","on","for","of","the","a","an","some",
+            "please","could","would","should","latest","newest","recent","most",
+            "oldest","least"
+        }
+        kept = [t for t in raw if t not in stop]
+        semantic = " ".join(kept) or q0
+
+        # minimal synonym expansion helpful for your corpus
+        kws = set(kept)
+        joined = " ".join(kept)
+
+        # E2E synonyms
+        if "e2e" in kws or ("end" in kws and "to" in kws and "end" in joined):
+            kws.update({"e2e", "end-to-end", "end to end"})
+            kws.update({"testing", "cypress"})
+
+        if "testing" in kws or "test" in kws:
+            kws.update({"testing", "tests", "qa"})
+
+        # fall back if we stripped everything
+        if not kws:
+            kws = set(raw[:3])
+
+        return {"semantic": semantic, "keywords": sorted(kws)}
+
+    def _like_patterns(self, words: list[str]) -> list[str]:
+        """For LIKE/ILIKE patterns."""
+        return [f"%{w.lower()}%" for w in words if w and w.strip()]
+
+
     # ====== Basic Postgres helper ======
     def _fetch_by_ids(self, ids: List[int]) -> Dict[int, Dict[str, Any]]:
         if not ids:
@@ -214,74 +261,78 @@ class RagService:
             match_reason="latest",
         )
 
-    def list_by_topic_all(self, topic: str) -> List[Retrieved]:
+    def list_by_topic_all(self, topic: str) -> List["Retrieved"]:
         """
-        Keyword retrieval with reduced false positives:
-        - short terms (<=3 chars) → regex word-boundary only
-        - long terms → LIKE + regex
-        Tracks which fields matched for transparency.
+        Keyword retrieval with reasonable precision:
+        - title/excerpt/tags: LIKE ANY(patterns)
+        - content: ONLY when we have at least two keywords -> LIKE ALL(patterns)
         """
-        term = topic.strip()
-        short = self._is_short_term(term)
-        t_like = f"%{term.lower()}%"
-        t_re = self._regex_for_word(term)
+        norm = self._normalize_query(topic)
+        patterns = self._like_patterns(norm["keywords"])          # list[str]
+        use_content_all = len(patterns) >= 2
+        content_patterns = patterns if use_content_all else None  # reuse same patterns
 
-        if short:
-            sql = """
-                SELECT
-                  id, title, url, excerpt, author, published_date,
-                  (title ~* %s) AS m_title,
-                  (coalesce(excerpt,'') ~* %s) AS m_excerpt,
-                  (coalesce(content,'') ~* %s) AS m_content,
-                  EXISTS (
+        # SELECT / WHERE fragments and matching param tuples
+        content_select = ", FALSE AS m_content"
+        content_where = ""
+        if use_content_all:
+            content_select = ", (lower(coalesce(content, '')) LIKE ALL(%s)) AS m_content"
+            content_where = " OR (lower(coalesce(content, '')) LIKE ALL(%s))"
+
+        sql = f"""
+            SELECT
+                id, title, url, excerpt, author, published_date,
+                (lower(title) LIKE ANY(%s))                  AS m_title,
+                (lower(coalesce(excerpt,  '')) LIKE ANY(%s)) AS m_excerpt,
+                EXISTS (
+                    SELECT 1
+                    FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
+                    WHERE lower(tag) LIKE ANY(%s)
+                ) AS m_tags
+                {content_select}
+            FROM articles
+            WHERE
+                (lower(title) LIKE ANY(%s))
+                OR (lower(coalesce(excerpt, '')) LIKE ANY(%s))
+                OR EXISTS (
                     SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE tag ~* %s
-                  ) AS m_tags
-                FROM articles
-                WHERE
-                  title ~* %s
-                  OR coalesce(excerpt,'') ~* %s
-                  OR coalesce(content,'') ~* %s
-                  OR EXISTS (
-                    SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE tag ~* %s
-                  )
-                ORDER BY coalesce(published_date, '1900-01-01') DESC, id DESC;
-            """
-            params = (t_re, t_re, t_re, t_re, t_re, t_re, t_re, t_re)
+                    WHERE lower(tag) LIKE ANY(%s)
+                )
+                {content_where}
+            ORDER BY coalesce(published_date, '1900-01-01') DESC, id DESC;
+        """
+
+        # Build params to exactly match the %s placeholders above
+        if use_content_all:
+            params = (
+                patterns,                # SELECT m_title
+                patterns,                # SELECT m_excerpt
+                patterns,                # SELECT m_tags
+                content_patterns,        # SELECT m_content
+                patterns,                # WHERE title
+                patterns,                # WHERE excerpt
+                patterns,                # WHERE tags
+                content_patterns,        # WHERE content
+            )
         else:
-            sql = """
-                SELECT
-                  id, title, url, excerpt, author, published_date,
-                  ((lower(title) LIKE %s) OR (title ~* %s)) AS m_title,
-                  ((lower(coalesce(excerpt,'')) LIKE %s) OR (coalesce(excerpt,'') ~* %s)) AS m_excerpt,
-                  ((lower(coalesce(content,'')) LIKE %s) OR (coalesce(content,'') ~* %s)) AS m_content,
-                  EXISTS (
-                    SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE (lower(tag) LIKE %s) OR (tag ~* %s)
-                  ) AS m_tags
-                FROM articles
-                WHERE
-                  (lower(title) LIKE %s) OR (title ~* %s)
-                  OR (lower(coalesce(excerpt,'')) LIKE %s) OR (coalesce(excerpt,'') ~* %s)
-                  OR (lower(coalesce(content,'')) LIKE %s) OR (coalesce(content,'') ~* %s)
-                  OR EXISTS (
-                    SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE (lower(tag) LIKE %s) OR (tag ~* %s)
-                  )
-                ORDER BY coalesce(published_date, '1900-01-01') DESC, id DESC;
-            """
-            params = (t_like, t_re, t_like, t_re, t_like, t_re, t_like, t_re,
-                      t_like, t_re, t_like, t_re, t_like, t_re, t_like, t_re)
+            params = (
+                patterns,                # SELECT m_title
+                patterns,                # SELECT m_excerpt
+                patterns,                # SELECT m_tags
+                patterns,                # WHERE title
+                patterns,                # WHERE excerpt
+                patterns,                # WHERE tags
+            )
 
         rows = self.pg.fetchall(sql, params)
+
         out: List[Retrieved] = []
         for r in rows:
             hits = []
             if r.get("m_title"):   hits.append("title")
             if r.get("m_excerpt"): hits.append("excerpt")
-            if r.get("m_content"): hits.append("content")
             if r.get("m_tags"):    hits.append("tags")
+            if use_content_all and r.get("m_content"): hits.append("content(all)")
             reason = "keyword(" + ", ".join(hits) + ")" if hits else "keyword"
             out.append(Retrieved(
                 id=int(r["id"]),
@@ -295,61 +346,40 @@ class RagService:
             ))
         return out
 
+
+
     def count_about(self, topic: str) -> int:
         """
         Conservative count:
-        - short terms (<=3 chars): regex word-boundary only
-        - long terms: LIKE + regex
-        Take max of keyword count vs. semantic (low threshold).
+        - Only title/excerpt/tags (no full content) to avoid overcounting short tokens.
+        - Returns integer count. (Semantic search is used elsewhere just for previews.)
         """
-        term = topic.strip()
-        short = self._is_short_term(term)
-        t_like = f"%{term.lower()}%"
-        t_re = self._regex_for_word(term)
+        norm = self._normalize_query(topic)
+        patterns = self._like_patterns(norm["keywords"])
 
-        if short:
-            sql = """
-                SELECT COUNT(*) AS n
-                FROM articles
-                WHERE
-                  title ~* %s
-                  OR coalesce(excerpt,'') ~* %s
-                  OR coalesce(content,'') ~* %s
-                  OR EXISTS (
+        sql = """
+            SELECT COUNT(*) AS n
+            FROM articles
+            WHERE
+                (lower(title) LIKE ANY(%s))
+                OR (lower(coalesce(excerpt, '')) LIKE ANY(%s))
+                OR EXISTS (
                     SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE tag ~* %s
-                  );
-            """
-            row = self.pg.fetchone(sql, (t_re, t_re, t_re, t_re))
-        else:
-            sql = """
-                SELECT COUNT(*) AS n
-                FROM articles
-                WHERE
-                  (lower(title) LIKE %s) OR (title ~* %s)
-                  OR (lower(coalesce(excerpt,'')) LIKE %s) OR (coalesce(excerpt,'') ~* %s)
-                  OR (lower(coalesce(content,'')) LIKE %s) OR (coalesce(content,'') ~* %s)
-                  OR EXISTS (
-                    SELECT 1 FROM unnest(coalesce(tags, ARRAY[]::text[])) AS tag
-                    WHERE (lower(tag) LIKE %s) OR (tag ~* %s)
-                  );
-            """
-            row = self.pg.fetchone(sql, (t_like, t_re, t_like, t_re, t_like, t_re, t_like, t_re))
-
-        n_kw = int(row["n"]) if row else 0
-
-        emb = self.embedder.embed(topic)
-        sem = self._qdrant_search(emb, top_k=1000, score_threshold=self.count_threshold)
-        ids_sem = {rid for rid, _, _ in sem}
-        return max(n_kw, len(ids_sem))
+                    WHERE lower(tag) LIKE ANY(%s)
+                );
+        """
+        row = self.pg.fetchone(sql, (patterns, patterns, patterns))
+        return int(row["n"]) if row else 0
 
     # ====== Hybrid Retrieval & Answering ======
     def hybrid_search(self, query: str, top_k: int = 10) -> List[Retrieved]:
+        norm = self._normalize_query(query)
+
         # 1) semantic
-        emb = self.embedder.embed(query)
+        emb = self.embedder.embed(norm["semantic"])
         sem_results = self._qdrant_search(emb, top_k=top_k, score_threshold=self.sim_threshold)
 
-        # 2) keyword (oversample for merge)
+        # 2) keyword (oversample for merge) using the original API name
         kw_rows = self.list_by_topic_all(query)[: top_k * 2]
         kw_by_id = {r.id: r for r in kw_rows}
 
@@ -366,22 +396,17 @@ class RagService:
                 score=float(score),
                 match_reason="semantic",
             )
-
         for rid, r in kw_by_id.items():
             if rid not in out:
                 out[rid] = r
 
-        ranked = sorted(
-            out.values(),
-            key=lambda x: ((x.score if x.match_reason == "semantic" else 0.0), x.published_date or ""),
-            reverse=True,
-        )
+        def sort_key(x: Retrieved):
+            base = x.score if x.match_reason == "semantic" else 0.0
+            return (base, x.published_date or "")
 
-        # NEW: if semantic+merge yields nothing, fall back to keyword-only
-        if not ranked:
-            return self.list_by_topic_all(query)[:top_k]
-
+        ranked = sorted(out.values(), key=sort_key, reverse=True)
         return ranked[:top_k]
+
 
     def hybrid_answer(self, question: str, top_k: int = 6) -> Dict[str, Any]:
         ctx = self.hybrid_search(question, top_k=top_k)
