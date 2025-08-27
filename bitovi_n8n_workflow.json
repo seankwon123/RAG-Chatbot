@@ -1,0 +1,459 @@
+{
+  "name": "bitovi_n8n_workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        0
+      ],
+      "id": "3579e359-a356-4db5-9635-877adee98a7f",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (compatible; n8n-scraper/1.0)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "2e4f6844-d67d-4900-b428-e3a85cfcf875",
+      "name": "HTTP Request - Fetch Blog Pages"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter out topic, pagination, and other non-article URLs\nconst items = $input.all();\nconst cleanedItems = [];\nconst seenUrls = new Set(); // Track normalized URLs to prevent duplicates\n\n// Normalize URL for deduplication\nfunction normalizeUrl(url) {\n  return url\n    .replace(/^https?:\\/\\//, '')  // Remove protocol\n    .replace(/^www\\./, '')         // Remove www\n    .replace(/\\/$/, '')            // Remove trailing slash\n    .replace(/#.*$/, '')           // Remove hash anchors\n    .toLowerCase();\n}\n\n// List of specific URLs that likely redirect to other articles\n// Only exclude JavaScriptMVC which we know redirects to CanJS\nconst redirectUrls = [\n  'javascriptmvc-3-0-good-to-go'  // Redirects to canjs-3-0-release\n];\n\n// Check if URL should be excluded as a redirect\nfunction isLikelyRedirect(url) {\n  const lowerUrl = url.toLowerCase();\n  return redirectUrls.some(redirect => lowerUrl.includes(redirect));\n}\n\nfor (const item of items) {\n  if (item.json?.article_urls) {\n    // Filter URLs to only include real articles\n    const realArticleUrls = item.json.article_urls.filter(url => {\n      if (!url || typeof url !== 'string') return false;\n      \n      // Remove topic/category pages, pagination URLs\n      if (url.includes('/blog/topic/')) return false;      \n      if (url.includes('/blog/page/')) return false;\n      \n      // Remove URLs with hash anchors (these are section links, not separate articles)\n      if (url.includes('#')) return false;\n      \n      // Remove old date format URLs (2010/07, 2012/05, etc.)\n      // These are the really old format that likely redirect\n      if (url.match(/\\/blog\\/\\d{4}\\/\\d{2}\\//)) return false;\n      \n      // Remove URLs that are likely redirects (just JavaScriptMVC)\n      if (isLikelyRedirect(url)) return false;\n      \n      // Remove relative URLs that aren't complete articles\n      if (url.startsWith('/blog/') && !url.includes('bitovi.com')) return false;\n      \n      // Only include full article URLs\n      if (url.includes('bitovi.com/blog/') && \n          !url.includes('/topic/') && \n          !url.includes('/page/')) {\n        return true;\n      }\n      \n      return false;\n    });\n    \n    console.log(`Page had ${item.json.article_urls.length} total URLs, filtered to ${realArticleUrls.length} article URLs`);\n    \n    // Create one item for each unique article URL\n    for (const url of realArticleUrls) {\n      const normalizedUrl = normalizeUrl(url);\n      \n      // Only add if we haven't seen this normalized URL before\n      if (!seenUrls.has(normalizedUrl)) {\n        seenUrls.add(normalizedUrl);\n        \n        // Clean up the URL format (use consistent https://bitovi.com format)\n        const cleanUrl = url\n          .replace(/^http:/, 'https:')\n          .replace('https://www.', 'https://');\n          \n        cleanedItems.push({ json: { url: cleanUrl } });\n      }\n    }\n  }\n}\n\nconsole.log(`Total unique articles found: ${cleanedItems.length}`);\nconsole.log(`Expected: 445 articles`);\n\n// Optional: Add validation\nif (cleanedItems.length !== 445) {\n  console.warn(`Warning: Expected 445 articles but found ${cleanedItems.length}`);\n}\n\nreturn cleanedItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "4bf25cb7-c96b-4413-9666-5a3abd845754",
+      "name": "Clean URLs"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "text",
+              "outputPropertyName": "body"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        0
+      ],
+      "id": "e8c7c552-e1e6-4364-b9dc-6e9ad9013563",
+      "name": "HTTP Request - Fetch Each Article",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst seen = new Set();\nconst uniqueItems = [];\nconst duplicates = [];\n\nfor (const item of items) {\n  const j = item.json || {};\n  // Prefer canonical; fall back to url\n  const key = (j.url_canonical || j.url || '').trim().toLowerCase();\n\n  if (!key) {\n    // No dedupe key — keep it (or log/skip if you prefer)\n    uniqueItems.push(item);\n    continue;\n  }\n\n  if (seen.has(key)) {\n    duplicates.push(item);\n  } else {\n    seen.add(key);\n    uniqueItems.push(item);\n  }\n}\n\nconsole.log(`Found ${uniqueItems.length} unique articles`);\nconsole.log(`Skipped ${duplicates.length} duplicates`);\nreturn uniqueItems;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        0
+      ],
+      "id": "f58c9c95-02fe-4a23-8da5-0456ad139c17",
+      "name": "Check for Duplicates"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO articles (\n  title,\n  url,\n  content,\n  excerpt,\n  author,\n  published_date,\n  tags,\n  word_count,\n  content_hash\n) VALUES (\n  {{ $json.title ? `'${$json.title.replace(/'/g, \"''\")}'` : \"'Untitled'\" }},\n  {{ `'${$json.url.replace(/'/g, \"''\")}'` }},\n  {{ $json.content ? `'${$json.content.replace(/'/g, \"''\")}'` : 'NULL' }},\n  {{ $json.excerpt ? `'${$json.excerpt.replace(/'/g, \"''\")}'` : 'NULL' }},\n  {{ $json.author ? `'${$json.author.replace(/'/g, \"''\")}'` : 'NULL' }},\n  {{ $json.published_date ? `'${$json.published_date}'::timestamptz` : 'NULL' }},\n  {{ $json.tags && $json.tags.length > 0 ? `ARRAY['${$json.tags.map(t => t.replace(/'/g, \"''\")).join(\"','\")}']::text[]` : 'NULL' }},\n  {{ $json.word_count || 'NULL' }},\n  {{ $json.content_hash ? `'${$json.content_hash}'` : 'NULL' }}\n)\nON CONFLICT (url) \nDO UPDATE SET \n  content = EXCLUDED.content,\n  excerpt = EXCLUDED.excerpt,\n  word_count = EXCLUDED.word_count,\n  content_hash = EXCLUDED.content_hash,\n  updated_at = NOW()\nRETURNING id;",
+        "options": {
+          "queryReplacement": "="
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2032,
+        0
+      ],
+      "id": "698adf4f-02ba-4064-aeda-e76b59283f78",
+      "name": "Insert Articles",
+      "credentials": {
+        "postgres": {
+          "id": "9f5GcXD0YmBhdPQe",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate URLs for 41 pages\nconst pages = [];\n\n// Add page 1\npages.push({ json: { url: 'https://www.bitovi.com/blog' } });\n\n// Add pages 2-41\nfor (let i = 2; i <= 41; i++) {\n  pages.push({ json: { url: `https://www.bitovi.com/blog/page/${i}` } });\n}\n\nconsole.log('Generated', pages.length, 'page URLs');\nreturn pages;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        0
+      ],
+      "id": "82838b7e-4dc0-453a-bdbb-cc4c218d8dda",
+      "name": "Generate page urls"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "dataPropertyName": "body",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "title",
+              "cssSelector": "h1, article h1, .post-title, .entry-title, title"
+            },
+            {
+              "key": "content",
+              "cssSelector": "article, .post-content, .entry-content, .content, main article"
+            },
+            {
+              "key": "excerpt",
+              "cssSelector": "meta[name='description']",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "author_meta",
+              "cssSelector": "meta[name=\"author\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "published_meta",
+              "cssSelector": "meta[property='article:published_time']",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "tags",
+              "cssSelector": "[rel='tag'], .tag, .post-tag, .category",
+              "returnArray": true
+            },
+            {
+              "key": "title_text",
+              "cssSelector": "meta[property=\"og:title\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "author_meta",
+              "cssSelector": "meta[name=\"author\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "published_meta",
+              "cssSelector": "meta[property=\"article:published_time\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "published_time",
+              "cssSelector": "time[datetime]",
+              "returnValue": "attribute",
+              "attribute": "datetime"
+            },
+            {
+              "key": "canonical_href",
+              "cssSelector": "link[rel=\"canonical\"]",
+              "returnValue": "attribute",
+              "attribute": "href"
+            },
+            {
+              "key": "author_text",
+              "cssSelector": ".author-name, .by-author a, .author-link, span.author"
+            },
+            {
+              "key": "author_img_alt",
+              "cssSelector": "img.author-img",
+              "returnValue": "attribute",
+              "attribute": "alt"
+            },
+            {
+              "key": "published_time_text",
+              "cssSelector": ".blog-post time"
+            },
+            {
+              "key": "og_url",
+              "cssSelector": "meta[property=\"og:url\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "tag_texts",
+              "cssSelector": "a[href*=\"/blog/topic/\"]",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        0
+      ],
+      "id": "6d8f63c0-c0d7-4df1-9afc-64e655aacf28",
+      "name": "HTML Extract Articles"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------- Helpers ----------\nfunction absolutize(raw, base) {\n  try {\n    if (!raw) return null;\n    if (/^https?:\\/\\//i.test(raw)) return raw;\n    return new URL(String(raw), String(base || 'https://www.bitovi.com')).toString();\n  } catch { return null; }\n}\nfunction canonicalizeUrl(raw, base) {\n  try {\n    const abs = absolutize(raw, base);\n    if (!abs) return null;\n    const u = new URL(abs.replace(/^http:/i, 'https:'));\n    u.hostname = u.hostname.replace(/^www\\./i, '').toLowerCase();\n    let p = (u.pathname || '/').toLowerCase();\n    p = p.replace(/\\/index\\.html$/i, '').replace(/\\.html$/i, '');\n    if (p !== '/' && p.endsWith('/')) p = p.slice(0, -1);\n    u.pathname = p || '/';\n    u.search = '';\n    u.hash = '';\n    return u.origin + u.pathname;\n  } catch { return null; }\n}\nfunction toISO(s) { if (!s) return null; const d = new Date(s); return isNaN(d) ? null : d.toISOString(); }\nfunction uniq(arr) { return Array.from(new Set((arr || []).map(s => String(s).trim()).filter(Boolean))); }\nfunction cheapHash(str) {\n  let h = 0;\n  const s = (str || '').substring(0, 1000);\n  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }\n  return Math.abs(h).toString(16).padStart(16, '0').substring(0, 64);\n}\n\n// ---------- Transform ----------\nconst inputs = $input.all();\nconst out = [];\n\nfor (let i = 0; i < inputs.length; i++) {\n  const j = inputs[i].json || {};\n\n  // Base page URL candidates (for resolving relative canonicals)\n  const pageBase = j.url || j.url_original || j.og_url || 'https://www.bitovi.com';\n\n  // Build an absolute page URL for DB \"url\"\n  const urlAbs =\n    absolutize(j.og_url, pageBase) ||\n    absolutize(j.url, pageBase) ||\n    absolutize(j.url_original, pageBase) ||\n    absolutize(j.canonical_href, pageBase);\n\n  // Canonical (normalized), falling back to normalized page url\n  const url_canonical =\n    canonicalizeUrl(j.canonical_href, pageBase) ||\n    canonicalizeUrl(urlAbs, urlAbs) ||\n    null;\n\n  // If we truly cannot build any url at all, keep going but log it\n  const urlFinal = urlAbs || url_canonical || absolutize(j.canonical_href, 'https://www.bitovi.com');\n\n  // Title\n  const title = (j.title || j.title_text || 'Untitled').substring(0, 500);\n\n  // Content + excerpt\n  const content = (j.content || '').replace(/\\s+/g, ' ').trim();\n  let excerpt = j.excerpt || null;\n  if (!excerpt && content) {\n    const first = content.substring(0, 500);\n    excerpt = first.length === 500 ? first + '...' : first;\n  }\n\n  // Author: prefer avatar alt, then author_meta, then author_text/author\n  let author =\n    (j.author_img_alt || '').trim() ||\n    (j.author_meta || '').trim() ||\n    (j.author_text || '').trim() ||\n    (j.author || '').trim() ||\n    null;\n  if (author && author.length > 200) author = author.substring(0, 200);\n\n  // Published date: meta → <time> text → fallbacks\n  let published_date =\n    toISO(j.published_meta) ||\n    toISO((j.published_time_text || '').trim()) ||\n    toISO(j.published_date) ||\n    toISO(j.published_time) ||\n    null;\n\n  // Tags: union and clean\n  let tags = [];\n  if (Array.isArray(j.tag_texts)) tags.push(...j.tag_texts);\n  if (Array.isArray(j.tags)) tags.push(...j.tags);\n  tags = uniq(tags)\n    .map(t => String(t)\n      .replace(/^tag for\\s*/i, '')\n      .replace(/\\[.*?\\]/g, '')\n      .replace(/\\s+/g, ' ')\n      .trim())\n    .filter(Boolean);\n  if (!tags.length) tags = null;\n\n  // Word count + hash\n  const word_count = content ? content.split(/\\s+/).filter(Boolean).length : null;\n  const content_hash = content ? cheapHash(content) : null;\n\n  // Debug first 3\n  if (i < 3) {\n    console.log('\\nItem', i);\n    console.log('  urlAbs:', urlAbs);\n    console.log('  canonical:', url_canonical);\n    console.log('  title:', title.slice(0, 60));\n    console.log('  author:', author || '(none)');\n    console.log('  published_date:', published_date || '(none)');\n    console.log('  content_len:', content.length);\n  }\n\n  out.push({\n    json: {\n      title,\n      url: (urlFinal || '').substring(0, 1000),\n      content: content || null,\n      excerpt: excerpt || null,\n      author: author || null,\n      published_date: published_date || null,   // ISO or null (safe for TIMESTAMPTZ)\n      tags,\n      word_count,\n      created_at: new Date().toISOString(),\n      updated_at: new Date().toISOString(),\n      content_hash,\n      url_canonical: url_canonical ? url_canonical.substring(0, 1000) : null\n    },\n    // <-- This preserves item linking for downstream nodes\n    pairedItem: { item: i }\n  });\n}\n\nconsole.log('\\n=== FINAL SUMMARY ===');\nconsole.log('Total articles:', out.length);\nconsole.log('With URL:', out.filter(i => i.json.url).length);\nconsole.log('With author:', out.filter(i => i.json.author).length);\nconsole.log('With date:', out.filter(i => i.json.published_date).length);\nconsole.log('With content:', out.filter(i => i.json.content).length);\nconsole.log('With canonical:', out.filter(i => i.json.url_canonical).length);\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        0
+      ],
+      "id": "8a6774b6-96c9-40b0-a3e6-117c73dd22e6",
+      "name": "Format Data for Database"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Just pass through with index\nconst items = $input.all();\nreturn items.map((item, i) => ({\n  json: {\n    ...item.json,\n    idx: i,\n    url_original: item.json.url  // Preserve original URL\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        0
+      ],
+      "id": "11140d7f-df1d-4089-9aa7-9b2c936d05b9",
+      "name": "Index URLs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preserve URL + idx + HTML body all the way through\nconst items = $input.all();\nconst output = [];\n\nfor (const item of items) {\n  const j = item.json || {};\n\n  // Prefer an existing idx if one is already present\n  const idx = (j.idx !== undefined && j.idx !== null) ? j.idx : 0;\n\n  // Make sure we always keep a plain `url` field in addition to `url_original`\n  const url = j.url || j.url_original || '';\n\n  // HTTP node may put the HTML into `body` (or sometimes `data`)\n  const body = typeof j === 'string' ? j : (j.body ?? j.data ?? '');\n\n  output.push({\n    json: {\n      idx,\n      url,                          // <— keep this plain url\n      url_original: j.url_original || url,  // keep the original if you’re tracking it\n      body                          // HTML for the extractor\n    }\n  });\n}\n\nconsole.log(`Prepared ${output.length} items for extraction`);\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ],
+      "id": "6ada843e-93da-4b6c-8217-12b92c2761a0",
+      "name": "Combine URL with fetched data"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "article_urls",
+              "cssSelector": "a[href*=\"/blog/\"]",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "984a1520-75ce-4090-b469-60ba0db54d7f",
+      "name": "Extract Article_URLs"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        208
+      ],
+      "id": "04e7ca72-b38c-4840-9787-2655d4f3993e",
+      "name": "1day trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request - Fetch Blog Pages": {
+      "main": [
+        [
+          {
+            "node": "Extract Article_URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean URLs": {
+      "main": [
+        [
+          {
+            "node": "Index URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Fetch Each Article": {
+      "main": [
+        [
+          {
+            "node": "Combine URL with fetched data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Insert Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate page urls": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Fetch Blog Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Extract Articles": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data for Database": {
+      "main": [
+        [
+          {
+            "node": "Check for Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Index URLs": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Fetch Each Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine URL with fetched data": {
+      "main": [
+        [
+          {
+            "node": "HTML Extract Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article_URLs": {
+      "main": [
+        [
+          {
+            "node": "Clean URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1day trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate page urls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b3aa5fc2-2dd8-4bc8-b46b-1d54ee27deb3",
+  "meta": {
+    "instanceId": "a28b41f6b9406703637f355d1dc089166a1909e80ef76fdb2309c382e7a7eae4"
+  },
+  "id": "GxPBARV9Ts6sdKrE",
+  "tags": []
+}
