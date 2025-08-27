@@ -230,6 +230,15 @@ class RagService:
         """For LIKE/ILIKE patterns."""
         return [f"%{w.lower()}%" for w in words if w and w.strip()]
 
+    
+    def _extract_requested_count(self, text: str, default: int = 5) -> int:
+        """Respect an explicit number if the user asked for 1/2/3/… results."""
+        m = re.search(r'\b(\d{1,3})\b', text)
+        if not m:
+            return default
+        n = max(1, min(50, int(m.group(1))))
+        return n
+
 
     # ====== Basic Postgres helper ======
     def _fetch_by_ids(self, ids: List[int]) -> Dict[int, Dict[str, Any]]:
@@ -266,13 +275,13 @@ class RagService:
         Keyword retrieval with reasonable precision:
         - title/excerpt/tags: LIKE ANY(patterns)
         - content: ONLY when we have at least two keywords -> LIKE ALL(patterns)
+        - Filter out rows that match *only* content(all)
         """
         norm = self._normalize_query(topic)
         patterns = self._like_patterns(norm["keywords"])          # list[str]
         use_content_all = len(patterns) >= 2
-        content_patterns = patterns if use_content_all else None  # reuse same patterns
+        content_patterns = patterns if use_content_all else None
 
-        # SELECT / WHERE fragments and matching param tuples
         content_select = ", FALSE AS m_content"
         content_where = ""
         if use_content_all:
@@ -302,38 +311,37 @@ class RagService:
             ORDER BY coalesce(published_date, '1900-01-01') DESC, id DESC;
         """
 
-        # Build params to exactly match the %s placeholders above
         if use_content_all:
             params = (
-                patterns,                # SELECT m_title
-                patterns,                # SELECT m_excerpt
-                patterns,                # SELECT m_tags
-                content_patterns,        # SELECT m_content
-                patterns,                # WHERE title
-                patterns,                # WHERE excerpt
-                patterns,                # WHERE tags
-                content_patterns,        # WHERE content
+                patterns, patterns, patterns, content_patterns,  # SELECT fields
+                patterns, patterns, patterns, content_patterns,  # WHERE  fields
             )
         else:
             params = (
-                patterns,                # SELECT m_title
-                patterns,                # SELECT m_excerpt
-                patterns,                # SELECT m_tags
-                patterns,                # WHERE title
-                patterns,                # WHERE excerpt
-                patterns,                # WHERE tags
+                patterns, patterns, patterns,  # SELECT
+                patterns, patterns, patterns,  # WHERE
             )
 
         rows = self.pg.fetchall(sql, params)
 
         out: List[Retrieved] = []
         for r in rows:
+            m_title   = bool(r.get("m_title"))
+            m_excerpt = bool(r.get("m_excerpt"))
+            m_tags    = bool(r.get("m_tags"))
+            m_content = bool(r.get("m_content")) if use_content_all else False
+
+            # >>> Filter: drop rows that matched ONLY content(all)
+            if use_content_all and m_content and not (m_title or m_excerpt or m_tags):
+                continue
+
             hits = []
-            if r.get("m_title"):   hits.append("title")
-            if r.get("m_excerpt"): hits.append("excerpt")
-            if r.get("m_tags"):    hits.append("tags")
-            if use_content_all and r.get("m_content"): hits.append("content(all)")
+            if m_title:   hits.append("title")
+            if m_excerpt: hits.append("excerpt")
+            if m_tags:    hits.append("tags")
+            if use_content_all and m_content: hits.append("content(all)")
             reason = "keyword(" + ", ".join(hits) + ")" if hits else "keyword"
+
             out.append(Retrieved(
                 id=int(r["id"]),
                 title=r["title"],
@@ -464,28 +472,40 @@ class RagService:
             ans = f"{headline}{summary}\n\nRead it: {r.url}"
             return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
 
-        # show/list/find … articles about/on …
-        m = re.search(r"(?:show|list|find)\s+(?:me\s+)?(?:some|a\s*few|all)?\s*articles?\s+(?:about|on)\s+(.+)", q)
-        if m:
-            topic = m.group(1).strip(" ?.")
-            rows = self.list_by_topic_all(topic)
+        # Show/List/Find ... (treat "articles" and "posts" the same)
+        if (re.search(r'\b(show|list|find|give|display)\b', q)
+            and re.search(r'\b(articles?|posts?)\b', q)
+            and 'about' in q):
+            # topic after "about"
+            topic = re.split(r'\babout\b', q, maxsplit=1)[1].strip(" .?!")
+            count = self.count_about(topic)
+
+
+            # how many to show: respect explicit number; default 5
+            n = self._extract_requested_count(q, default=5)
+
+            rows = self.list_by_topic_all(topic)   # LEAVE as-is, no internal limiting
             if not rows:
-                return {"answer": f"I couldn't find Bitovi articles about “{topic}”.", "sources": []}
+                return {"answer": f"No articles matched “{topic}”.", "sources": []}
 
-            preface = ("Matched by keyword across *title, excerpt, content, or tags* "
-                    "(each bullet shows which fields matched).")
+            rows = rows[:n]  # only trim here
 
-            # Clean, spaced Markdown bullets with a blank line between items
-            bullets = []
-            for r in rows[:20]:
-                pub = r.published_date[:10] if r.published_date else "no date"
+            preface = f"Here are articles I found related to “{topic}”."
+            # preface += "\n\nMatched by keyword across *title, excerpt, content, or tags* (router matched posts/articles)."
+
+            bullets, sources = [], []
+            for r in rows:
+                date = f" {r.published_date[:10]}" if r.published_date else ""
                 bullets.append(
-                    f"- **{r.title}**  \n"
-                    f"  📅 {pub} · _{r.match_reason}_  \n"
-                    f"  {r.url}"
+                    f"• **{r.title}**{date}\n"
+                    f"  _{r.match_reason}_\n"
+                    f"  {r.url}\n"
                 )
-            answer = f"{preface}\n\n" + "\n\n".join(bullets)
-            return {"answer": answer, "sources": [{"title": r.title, "url": r.url} for r in rows[:10]]}
+                sources.append({"title": r.title, "url": r.url})
+
+            ans = preface + "\n\n" + "\n".join(bullets)
+            return {"answer": ans, "sources": sources}
+
 
         # About block
         m = re.search(r"all .* about (.+)", q)

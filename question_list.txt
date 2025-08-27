@@ -1,21 +1,26 @@
 GOOD:
 
-"What is the most recent blog about?"
-"What is the most recent blog?"
-"Give me a summary about the most recent blog post."
-"What articles can tell me about CI/CD pipelines?"
-"How many articles does Bitovi have about AI?"
-"Show some articles about cloud architecture"
-"how many articles about cloud architecture?"
-"what kind of tools are recommended for cloud development?"
-"What kind of tools does Bitovi recommend for E2E testing?"
+1. What is Bitovi's latest blog post about?
+2. Give me a summary about the most recent blog post.
+
+
+3. How many articles does Bitovi have about AI?
+4. how many articles about cloud architecture?
+
+5. What articles can tell me about CI/CD pipelines?
+6. Show some articles about cloud architecture
+7. Can you show me all Bitovi articles about DevOps?
+
+
+8. what kind of tools are recommended for cloud development?
+9. What kind of tools does Bitovi recommend for E2E testing?
+10. What kind of approaches should be used for AI architecture?
 
 
 
 TODO:
-"show me posts about..." (way less output)
-"show me articles about..." (way better output) give different output layouts, make these same
- - posts / articles should be the same meaning
+"show me posts about..." (way less output) "show me articles about..." (way more output) give different output layouts
+ - posts / articles should be the same meaning, I want both to show what comes up for "articles"
  - What made them different outputs, and why was "posts" stricter?
 
 
@@ -23,17 +28,14 @@ TODO:
     ugly output on "all" keyword - make this say "here is a list of sources to all about ____" 
                                 - and have the exact "sources" output it has currently
 
+if i use side button click for first prompt, it is duplicated 
 
+get rid of search mode
+
+----------------
 
 
 Not Working / suspicious:
-
-
-"Show articles about cloud architecture"
-    Only shows 1 articles about node.js, maybe show some with keyword cloud, architecture?
-
-
-
 
 
 
@@ -43,15 +45,4 @@ Not Working / suspicious:
 "can you show me the five most recent bitovi posts?"
     only gives the most recent
 
-----------------
-
-
-"What is the second latest post in the blog?"
-    gives first
-
-
-
-
-"How many authors are there?"
-    can't find anything
-
+things about authors
