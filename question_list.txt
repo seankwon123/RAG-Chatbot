@@ -1,0 +1,50 @@
+Working:
+
+"What is the most recent blog about?"
+"What is the most recent blog?"
+"Give me a summary about the most recent blog post."
+"What articles can tell me about CI/CD pipelines?"
+"How many articles does Bitovi have about AI?"
+"Show some articles about cloud architecture"
+"how many articles about cloud architecture?"
+"what kind of tools are recommended for cloud development?"
+
+
+
+
+
+
+Not Working / suspicious:
+
+
+"What kind of tools does Bitovi recommend for E2E testing?"
+    this should show at least "Testing Angular Applications End-to-End (E2E) with Cypress" and maybe things that match e2e or testing keywords? if it's not already doing that
+
+"Show articles about cloud architecture"
+    Only shows 1 articles about node.js, maybe show some with keyword cloud, architecture?
+
+
+"Show me all Bitovi articles about DevOps"
+    ugly output
+
+
+
+
+
+"What is the earliest post in the blog?"
+
+"can you show me the five most recent bitovi posts?"
+    only gives the most recent
+
+----------------
+
+
+"What is the second latest post in the blog?"
+    gives first
+
+
+
+
+"How many authors are there?"
+    can't find anything
+

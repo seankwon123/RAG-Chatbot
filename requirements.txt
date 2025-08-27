@@ -1,0 +1,6 @@
+streamlit               # Chatbot interface
+qdrant-client           # vector database
+sentence-transformers   # text embeddings
+psycopg2-binary         # PostgreSQL database adapter
+python-dotenv           # environment variables
+requests                # API calls
