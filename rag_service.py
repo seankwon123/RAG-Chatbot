@@ -248,6 +248,55 @@ class RagService:
         return {int(row["id"]): row for row in rows}
 
     # ====== Public API ======
+
+    def oldest_article(self) -> Optional[Retrieved]:
+        sql = """
+            SELECT id, title, url, excerpt, author, published_date
+            FROM articles
+            WHERE published_date IS NOT NULL
+            ORDER BY published_date ASC, id ASC
+            LIMIT 1;
+        """
+        r = self.pg.fetchone(sql)
+        if not r:
+            return None
+        return Retrieved(
+            id=int(r["id"]),
+            title=r["title"],
+            url=r["url"],
+            excerpt=r.get("excerpt") or "",
+            author=r.get("author"),
+            published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+            score=1.0,
+            match_reason="oldest",
+        )
+
+    def oldest_articles(self, n: int = 5) -> List[Retrieved]:
+        # sanitize n to avoid SQL parameter/formatting issues
+        n = max(1, min(50, int(n)))
+        sql = f"""
+            SELECT id, title, url, excerpt, author, published_date
+            FROM articles
+            WHERE published_date IS NOT NULL
+            ORDER BY published_date ASC, id ASC
+            LIMIT {n};
+        """
+        rows = self.pg.fetchall(sql)
+        out: List[Retrieved] = []
+        for r in rows:
+            out.append(Retrieved(
+                id=int(r["id"]),
+                title=r["title"],
+                url=r["url"],
+                excerpt=r.get("excerpt") or "",
+                author=r.get("author"),
+                published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+                score=1.0,
+                match_reason="oldest",
+            ))
+        return out
+
+
     def latest_article(self) -> Optional[Retrieved]:
         sql = """
             SELECT id, title, url, excerpt, author, published_date
@@ -269,6 +318,32 @@ class RagService:
             score=1.0,
             match_reason="latest",
         )
+    
+    def latest_articles(self, n: int = 5) -> List[Retrieved]:
+        # sanitize n (and inline the integer in LIMIT to avoid % formatting issues)
+        n = max(1, min(50, int(n)))
+        sql = f"""
+            SELECT id, title, url, excerpt, author, published_date
+            FROM articles
+            WHERE published_date IS NOT NULL
+            ORDER BY published_date DESC, id DESC
+            LIMIT {n};
+        """
+        rows = self.pg.fetchall(sql)
+        out: List[Retrieved] = []
+        for r in rows:
+            out.append(Retrieved(
+                id=int(r["id"]),
+                title=r["title"],
+                url=r["url"],
+                excerpt=r.get("excerpt") or "",
+                author=r.get("author"),
+                published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+                score=1.0,
+                match_reason="latest",
+            ))
+        return out
+
 
     def list_by_topic_all(self, topic: str) -> List["Retrieved"]:
         """
@@ -430,7 +505,8 @@ class RagService:
         sys_prompt = (
             "You are a helpful Bitovi blog assistant. Answer concisely and cite sources.\n"
             "Use ONLY the provided context. Prefer 3–6 short bullets when suitable.\n"
-            "If there is no relevant context, say: “I couldn't find relevant Bitovi articles.” "
+            "Precede the bullets with a response similar to “Here are some results I found”, but vary it according to the input. \n"
+            "If there is no relevant context, say: “I couldn't find relevant Bitovi articles.”\n"
             "Do NOT output empty bullets.\n\n"
         )
         user_prompt = f"QUESTION: {question}\n\nCONTEXT:\n" + "\n---\n".join(snippets) + "\n\nANSWER:"
@@ -452,25 +528,113 @@ class RagService:
     def answer_question(self, question: str) -> Dict[str, Any]:
         q = question.lower().strip()
 
-        # Latest / most recent
+        # Latest / most recent / newest  (supports single or N results)
         if ("latest" in q) or ("most recent" in q) or ("newest" in q):
-            r = self.latest_article()
-            if not r:
+            # Respect an explicit number if present; default to 1 (single article)
+            n = self._extract_requested_count(q, default=1)
+
+            if n <= 1:
+                r = self.latest_article()
+                if not r:
+                    return {"answer": "I couldn't find any articles.", "sources": []}
+
+                parts = [f"The latest Bitovi post is “{r.title}”"]
+                if r.author:
+                    parts.append(f"by {r.author}")
+                if r.published_date:
+                    parts.append(f"published on {r.published_date[:10]}")
+                headline = ", ".join(parts) + "."
+
+                wants_summary = ("about" in q) or ("summary" in q)
+                summary_text = self._summary_for(r)  # uses excerpt or LLM fallback
+                summary = f"\n\n**Summary:** {summary_text}" if (wants_summary or summary_text) else ""
+
+                ans = f"{headline}{summary}\n\nRead it: {r.url}"
+                return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
+
+            # n >= 2 → list the N most recent
+            rows = self.latest_articles(n)
+            if not rows:
                 return {"answer": "I couldn't find any articles.", "sources": []}
 
-            parts = [f"The latest Bitovi post is “{r.title}”"]
-            if r.author:
-                parts.append(f"by {r.author}")
-            if r.published_date:
-                parts.append(f"published on {r.published_date[:10]}")
-            headline = ", ".join(parts) + "."
+            preface = f"Here are the **{len(rows)}** most recent Bitovi posts:"
+            bullets, sources = [], []
+            for r in rows:
+                date = f"{r.published_date[:10]}" if r.published_date else "unknown date"
+                bullets.append(
+                    f"- **{r.title}**  \n"
+                    f"  _published {date}_  \n"
+                    f"  {r.url}"
+                )
+                sources.append({"title": r.title, "url": r.url})
 
-            wants_summary = ("about" in q) or ("summary" in q)
-            summary_text = self._summary_for(r)
-            summary = f"\n\n**Summary:** {summary_text}" if (wants_summary or summary_text) else ""
+            ans = preface + "\n\n" + "\n\n".join(bullets)
+            return {"answer": ans, "sources": sources}
 
-            ans = f"{headline}{summary}\n\nRead it: {r.url}"
-            return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
+
+        # Oldest / earliest / first / least recent
+        if (
+            ("oldest" in q) or ("earliest" in q) or ("least recent" in q)
+            or ("first" in q and "article" in q)
+        ):
+            # If user specified a number, list that many; otherwise default to 1 (single)
+            n = self._extract_requested_count(q, default=1)
+
+            if n <= 1:
+                r = self.oldest_article()
+                if not r:
+                    return {"answer": "I couldn't find any articles.", "sources": []}
+
+                parts = [f"The oldest Bitovi post is “{r.title}”"]
+                if r.author:
+                    parts.append(f"by {r.author}")
+                if r.published_date:
+                    parts.append(f"published on {r.published_date[:10]}")
+                headline = ", ".join(parts) + "."
+
+                # mirror latest: show summary if asked, or if we have it
+                wants_summary = ("about" in q) or ("summary" in q)
+                summary_text = self._summary_for(r)
+                summary = f"\n\n**Summary:** {summary_text}" if (wants_summary or summary_text) else ""
+
+                ans = f"{headline}{summary}\n\nRead it: {r.url}"
+                return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
+
+            # n >= 2 → list the N oldest
+            rows = self.oldest_articles(n)
+            if not rows:
+                return {"answer": "I couldn't find any articles.", "sources": []}
+
+            preface = f"Here are the **{len(rows)}** oldest Bitovi posts:"
+            bullets, sources = [], []
+            for r in rows:
+                date = f"{r.published_date[:10]}" if r.published_date else "unknown date"
+                bullets.append(
+                    f"- **{r.title}**  \n"
+                    f"  _published {date}_  \n"
+                    f"  {r.url}"
+                )
+                sources.append({"title": r.title, "url": r.url})
+            ans = preface + "\n\n" + "\n\n".join(bullets)
+            return {"answer": ans, "sources": sources}
+
+
+        # All/About block
+        m = re.search(r"all .* about (.+)", q)
+        if m:
+            topic = m.group(1).strip(" ?.")
+            rows = self.list_by_topic_all(topic)
+            if not rows:
+                return {"answer": f"No articles matched “{topic}”.", "sources": []}
+            preface = (
+                f"I found about **{len(rows)}** articles related to “{topic}”.\n\n"
+                "Matched by keyword across *title, excerpt, content, or tags* "
+                "(each line shows which fields matched)."
+            )
+            items = [f"• {r.title} — {r.url}  [{r.match_reason}]\n" for r in rows]
+            return {"answer": f"{preface}\n\n" + "\n".join(items),
+                    "sources": [{"title": r.title, "url": r.url} for r in rows]}
+
 
         # Show/List/Find ... (treat "articles" and "posts" the same)
         if (re.search(r'\b(show|list|find|give|display)\b', q)
@@ -490,8 +654,8 @@ class RagService:
 
             rows = rows[:n]  # only trim here
 
-            preface = f"Here are articles I found related to “{topic}”."
-            # preface += "\n\nMatched by keyword across *title, excerpt, content, or tags* (router matched posts/articles)."
+            preface = f"Here are articles I found related to “{topic}”.\n\n"
+            preface += "Matched by keyword across *title, excerpt, content, or tags* (router matched posts/articles)."
 
             bullets, sources = [], []
             for r in rows:
@@ -507,19 +671,7 @@ class RagService:
             return {"answer": ans, "sources": sources}
 
 
-        # About block
-        m = re.search(r"all .* about (.+)", q)
-        if m:
-            topic = m.group(1).strip(" ?.")
-            rows = self.list_by_topic_all(topic)
-            if not rows:
-                return {"answer": f"No articles matched “{topic}”.", "sources": []}
-            preface = ("Matched by keyword across *title, excerpt, content, or tags* "
-                       "(each line shows which fields matched).")
-            items = [f"• {r.title} — {r.url}  [{r.match_reason}]" for r in rows]
-            return {"answer": f"{preface}\n\n" + "\n".join(items),
-                    "sources": [{"title": r.title, "url": r.url} for r in rows]}
-
+        
         # Count block
         m = re.search(r"(how many|count).+about (.+)", q)
         if m:
@@ -541,7 +693,7 @@ class RagService:
                 )
                 sources.append({"title": r.title, "url": r.url})
 
-            ans = f"I found about **{n}** articles related to “{topic}”. Here are a few examples:\n\n" + "\n\n".join(bullets)
+            ans = f"I found about **{n}** articles related to “{topic}”.\n\n Here are a few examples:\n\n" + "\n\n".join(bullets)
             return {"answer": ans, "sources": sources}
 
 

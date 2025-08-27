@@ -1,7 +1,7 @@
 GOOD:
 
 1. What is Bitovi's latest blog post about?
-2. Give me a summary about the most recent blog post.
+2. What is Bitovi's earliest article about?
 
 
 3. How many articles does Bitovi have about AI?
@@ -16,28 +16,23 @@ GOOD:
 9. What kind of tools does Bitovi recommend for E2E testing?
 10. What kind of approaches should be used for AI architecture?
 
+11. What are the best steps to take for AI dev?
 
-
-TODO:
-"show me posts about..." (way less output) "show me articles about..." (way more output) give different output layouts
- - posts / articles should be the same meaning, I want both to show what comes up for "articles"
- - What made them different outputs, and why was "posts" stricter?
-
-
-"Show me all Bitovi articles about DevOps"
-    ugly output on "all" keyword - make this say "here is a list of sources to all about ____" 
-                                - and have the exact "sources" output it has currently
-
-if i use side button click for first prompt, it is duplicated 
-
-get rid of search mode
 
 ----------------
 
+Notes:
+RESOLVED - "show me posts about..." (way less output) "show me articles about..." (way more output) give different output layouts
+ - posts / articles should be the same meaning, I want both to show what comes up for "articles"
+ - What made them different outputs, and why was "posts" stricter?
+        “articles” matched your explicit route and printed every keyword hit.
+        “posts” missed the regex, so it fell through to the hybrid (semantic + LLM) branch, which deliberately returns fewer items.
+ - “posts” and “articles” are synonyms now 
 
-Not Working / suspicious:
 
 
+
+Not Working:
 
 
 "What is the earliest post in the blog?"
