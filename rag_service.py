@@ -1,7 +1,7 @@
 # rag_service.py
 # ----------------
 # Focused RAG backend for PostgreSQL + Qdrant.
-# Changes in this version:
+# In this version:
 # - Reduce keyword overcounting (esp. "ai") via regex word-boundaries for short terms.
 # - For longer terms, use LIKE + regex.
 # - Keep top-5 preview for count questions.
@@ -208,7 +208,7 @@ class RagService:
         kept = [t for t in raw if t not in stop]
         semantic = " ".join(kept) or q0
 
-        # minimal synonym expansion helpful for your corpus
+        # minimal synonym expansion for keywords
         kws = set(kept)
         joined = " ".join(kept)
 
@@ -220,7 +220,7 @@ class RagService:
         if "testing" in kws or "test" in kws:
             kws.update({"testing", "tests", "qa"})
 
-        # fall back if we stripped everything
+        # fall back if no keywords found
         if not kws:
             kws = set(raw[:3])
 
@@ -400,13 +400,14 @@ class RagService:
         rows = self.pg.fetchall(sql, params)
 
         out: List[Retrieved] = []
+        
         for r in rows:
             m_title   = bool(r.get("m_title"))
             m_excerpt = bool(r.get("m_excerpt"))
             m_tags    = bool(r.get("m_tags"))
             m_content = bool(r.get("m_content")) if use_content_all else False
 
-            # >>> Filter: drop rows that matched ONLY content(all)
+            # Filter: drop rows that matched ONLY content(all)
             if use_content_all and m_content and not (m_title or m_excerpt or m_tags):
                 continue
 
