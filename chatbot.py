@@ -1,6 +1,6 @@
 # chatbot.py
 """
-Streamlit chatbot interface for the Bitovi RAG system (cleaned)
+Streamlit chatbot interface for the RAG system (cleaned)
 - All routing/logic lives in rag_service.answer_question()
 - Sidebar sample questions won't double-render
 """
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # ---------- Page ----------
 st.set_page_config(
-    page_title="Bitovi Knowledge Assistant",
+    page_title="Blog Knowledge Assistant",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -49,12 +49,12 @@ def run_query(prompt: str) -> Dict[str, Any]:
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    st.title("🤖 BitoviBlogBot")
+    st.title("🤖 BlogBot")
 
     st.markdown("## 💡 Sample Questions")
     sample_questions = [
-        "What is Bitovi's latest blog post about?",
-        "Show me all Bitovi articles about DevOps",
+        "What is the latest blog post about?",
+        "Show me all articles about DevOps",
         "How many articles does Bitovi have about AI?",
         "What kind of tools does Bitovi recommend for E2E testing?",
         "What are best practices for React development?",
@@ -86,8 +86,8 @@ with st.sidebar:
         st.error("❌ System Error")
 
 # ---------- Main ----------
-st.title("Bitovi Knowledge Assistant")
-st.markdown("Ask me anything about Bitovi's blog articles and technical content!")
+st.title("Blog Knowledge Assistant")
+st.markdown("Ask me anything about Bitovi's Software blog articles and technical content!")
 
 # Process a scheduled sidebar question without duplicate rendering
 if st.session_state.process_question:
@@ -115,7 +115,7 @@ for message in st.session_state.messages:
                     st.markdown(f"- [{source['title']}]({source['url']})")
 
 # Chat input
-prompt = st.chat_input("Ask about Bitovi articles...")
+prompt = st.chat_input("Ask about blog articles...")
 if prompt:
     with st.spinner("Searching..."):
         result = run_query(prompt)
@@ -132,11 +132,11 @@ if prompt:
 with st.expander("ℹ️ How to use"):
     st.markdown("""
     Ask questions like:
-    - **Latest Article**: “What's the latest Bitovi blog post?”
+    - **Latest Article**: “What's the latest blog post?”
     - **Find All Articles**: “Show me all articles about DevOps”
     - **Count**: “How many articles about AI?”
     - **Topics**: “What tools for E2E testing?”
-    - **General**: Any question about Bitovi's technical content
+    - **General**: Any question about technical content
 
     The assistant searches across titles, excerpts, content, and tags, and includes sources for verification.
     """)

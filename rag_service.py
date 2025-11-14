@@ -507,7 +507,7 @@ class RagService:
             "You are a helpful Bitovi blog assistant. Answer concisely and cite sources.\n"
             "Use ONLY the provided context. Prefer 3–6 short bullets when suitable.\n"
             "Precede the bullets with a response similar to “Here are some results I found”, but vary it according to the input. \n"
-            "If there is no relevant context, say: “I couldn't find relevant Bitovi articles.”\n"
+            "If there is no relevant context, say: “I couldn't find relevant articles.”\n"
             "Do NOT output empty bullets.\n\n"
         )
         user_prompt = f"QUESTION: {question}\n\nCONTEXT:\n" + "\n---\n".join(snippets) + "\n\nANSWER:"
@@ -539,7 +539,7 @@ class RagService:
                 if not r:
                     return {"answer": "I couldn't find any articles.", "sources": []}
 
-                parts = [f"The latest Bitovi post is “{r.title}”"]
+                parts = [f"The latest post is “{r.title}”"]
                 if r.author:
                     parts.append(f"by {r.author}")
                 if r.published_date:
@@ -558,7 +558,7 @@ class RagService:
             if not rows:
                 return {"answer": "I couldn't find any articles.", "sources": []}
 
-            preface = f"Here are the **{len(rows)}** most recent Bitovi posts:"
+            preface = f"Here are the **{len(rows)}** most recent posts:"
             bullets, sources = [], []
             for r in rows:
                 date = f"{r.published_date[:10]}" if r.published_date else "unknown date"
@@ -586,7 +586,7 @@ class RagService:
                 if not r:
                     return {"answer": "I couldn't find any articles.", "sources": []}
 
-                parts = [f"The oldest Bitovi post is “{r.title}”"]
+                parts = [f"The oldest post is “{r.title}”"]
                 if r.author:
                     parts.append(f"by {r.author}")
                 if r.published_date:
@@ -606,7 +606,7 @@ class RagService:
             if not rows:
                 return {"answer": "I couldn't find any articles.", "sources": []}
 
-            preface = f"Here are the **{len(rows)}** oldest Bitovi posts:"
+            preface = f"Here are the **{len(rows)}** oldest posts:"
             bullets, sources = [], []
             for r in rows:
                 date = f"{r.published_date[:10]}" if r.published_date else "unknown date"
@@ -749,7 +749,7 @@ class RagService:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--question", type=str, default="What kind of tools does Bitovi recommend for E2E testing?")
+    parser.add_argument("--question", type=str, default="What kind of tools are recommended for E2E testing?")
     parser.add_argument("--top_k", type=int, default=6)
     args = parser.parse_args()
 

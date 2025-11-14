@@ -47,7 +47,7 @@ docker --version
 sudo docker stop $(sudo docker ps -q)
 
 ### Start fresh
-cd ~/Documents/Projects/Bitovi-RAG/n8n-getting-started
+cd ~/Documents/Projects/RAG-Chatbot/n8n-getting-started
 sudo docker-compose -f docker-compose.yml -f Postgres/docker-compose.yml -f Qdrant/docker-compose.yml -f Adminer/docker-compose.yml up -d
 
 
@@ -69,7 +69,7 @@ sudo docker network ls | grep n8n
 
 
 # Overall Workflow Outline
-## Step 1: Setting up n8n Workflow for Bitovi Blog
+## Step 1: Setting up n8n Workflow for Blog
 - Set up environment and getting it running
 
 
@@ -98,7 +98,7 @@ project/
 
 
 # STEPS TO SET UP CONTAINERS
-- cd ~/Documents/Projects/Bitovi-RAG/n8n-getting-started
+- cd ~/Documents/Projects/RAG-Chatbot/n8n-getting-started
 - sudo docker-compose -f docker-compose.yml -f Postgres/docker-compose.yml -f Qdrant/docker-compose.yml -f Adminer/docker-compose.yml up -d
 
 - Connect to project with: python3 config.py
@@ -131,8 +131,8 @@ Update:
 - Qdrant is working,
 - RAG is working, 
 - Chatbot passes tets, but has issues with:
-  - "Can you show me all Bitovi articles about DevOps"
-  - "What is Bitovi's latest blog post about?" 
+  - "Can you show me all articles about DevOps"
+  - "What is the latest blog post about?" 
 
 8/26:
 Update:

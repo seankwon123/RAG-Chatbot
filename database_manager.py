@@ -1,6 +1,6 @@
 # database_manager.py
 """
-PostgreSQL database manager for the Bitovi RAG system.
+PostgreSQL database manager for the RAG system.
 Handles all database operations including fetching articles and keyword searches.
 """
 

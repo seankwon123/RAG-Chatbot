@@ -1,6 +1,6 @@
 # qdrant_manager.py
 """
-Qdrant vector database manager for the Bitovi RAG system.
+Qdrant vector database manager for the RAG system.
 Handles vector storage, semantic search, and filtering.
 """
 

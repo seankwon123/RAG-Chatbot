@@ -1,6 +1,6 @@
 # models.py
 """
-Enhanced database models and configuration for the Bitovi RAG system.
+Enhanced database models and configuration for the RAG system.
 This improves on the basic config by adding structured models and better search capabilities.
 """
 
