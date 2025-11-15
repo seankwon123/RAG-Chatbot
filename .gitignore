@@ -1,0 +1,32 @@
+# Python venv
+venv/
+.env
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit cache
+.streamlit/
+
+# Local database files (if created)
+*.db
+
+# Qdrant local storage (if run local qdrant)
+# qdrant_storage*/
+
+# n8n workflow backups
+*.backup
+*.swp
+
+# Logs
+*.log
+logs/
