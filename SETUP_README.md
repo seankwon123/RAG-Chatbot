@@ -102,3 +102,8 @@ Wiring up LangChain into the rag_service
 
 11/15:
 Attempting to change from using n8n workflows to pure python scripts and SQL. 
+
+creating two scripts
+ - scrape_articles.py
+  - using beautifulsoup4 and lxml (xml and html python processor)
+  - this gets the articles from the blog.
