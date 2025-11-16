@@ -36,10 +36,6 @@ sudo docker-compose -f docker-compose.yml -f Postgres/docker-compose.yml -f Qdra
    - -f Adminer/... optional, it is just GUI for PostgreSQL
 
 
-
-
-# WORKFLOW RUN WITH RAG CHATBOT
-
 ## n8n Workflow setup and execution
 Go to n8n-getting-started if needed and set up.
 Once set, use this
@@ -64,9 +60,6 @@ Run workflow by dropping json of workflow file and setting up credentials
  - python embedding_manager.py - requires all-minilm embedding model
  - python rag_service.py
  - streamlit run chatbot.py
-
-
-
 
 
 # Notes:
@@ -109,4 +102,4 @@ creating two scripts
   - this gets the articles from the blog.
 
  - build_index.py
-  - 
+  - index and embed data to be processed by Qdrant into vectors

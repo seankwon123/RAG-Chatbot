@@ -1,5 +1,4 @@
-# n8n Workflow:
-
+Original Setup Workflow:
 - Fetch blog content - HTTP request
 - Parse article content - HTML extract
 - Clean and structure data - Code Node
@@ -14,34 +13,12 @@ Postgres - Article storage and metadata
 Qdrant - Vector database for embeddings/search
 Docker Compose - Container orchestration
 
-(local deployment setup)
-
-# 'n8n-getting-started' setup
-
-## install docker
-## If necessary, install docker, and setup the services
-sudo snap install docker
-
-## Install Docker
-sudo apt install docker.io
-
-## Start and enable Docker service
-sudo systemctl start docker
-sudo systemctl enable docker
-
-## Verify Docker service is running
-sudo systemctl status docker
-
-## Docker "unable to get image" issue
-### Add your user to the docker group
-sudo usermod -aG docker $USER
-
-### Apply the new group membership (or you can log out and back in)
-newgrp docker
-
-### Verify Docker works without sudo
-docker --version
-
+11/15: Update - Using python scripts to replace "n8n" workflows.
+ - Fetch blog content 
+ - Parse article content
+ - Clean and structure data
+ - Store articles to PostgreSQL service
+ - Build Index for Qdrant data vectorization
 
 # RAG Architecture
 Using LangChain:
@@ -71,3 +48,109 @@ project/
     ├── populate_qdrant.py      # One-time setup script
     └── requirements.txt
 
+
+
+# FULL RUN OF THE WHOLE APPLICATION AND RAG SYSTEM:
+
+## Start up RAG
+ - Check if Ollama is running.
+  ```
+  ollama list
+  ```
+  - This should list all-minilm, nomic-embed-text, qwen2.5, and llama3.1 
+  - if not,
+  ```
+  ollama serve
+  ```
+ - Make sure all containers are up (Postgres + Qdrant)
+  ```
+  cd .../n8n-getting-started
+  sudo docker-compose -f docker-compose.yml -f Postgres/docker-compose.yml -f Qdrant/docker-compose.yml up -d
+  ```
+ - Verify
+  ```
+  sudo docker ps
+  ```
+ - Port Checks
+  ```
+  sudo lsof -i :5432   # Postgres
+  sudo lsof -i :6333   # Qdrant
+  sudo lsof -i :8080   # Adminer if used
+  ```
+ - Set up Data, index into Qdrant, get rag_service ready
+  ```
+  cd .../RAG-Chatbot
+  source venv/bin/activate
+  ```
+  - Optional: confirm "articles" exists in Postgres container (might need to install psql)
+  ``` 
+  # articles exists
+  PGPASSWORD=password psql \
+      -h localhost \
+      -p 5432 \
+      -U n8n \
+      -d n8n \
+      -c "\d articles"
+
+  # articles total count
+  PGPASSWORD=password psql \
+  -h localhost \
+  -p 5432 \
+  -U n8n \
+  -d n8n \
+  -c "SELECT COUNT(*) FROM articles;"
+
+  ```
+ - If articles exist and total count is 452, SKIP SCRAPE
+ - Scrape and upsert into Postgres
+  ```
+  python3 scrape_articles.py
+  ```
+ 
+ - Check Qdrant collection exists
+ ```
+ # Check exists
+ curl http://localhost:6333/collections
+ 
+ # Expected response
+ {
+  "collections": [
+    {
+      "name": "articles_collection"
+    }
+  ]
+ }
+
+ # If exists, check vector points count: Should be - "points_count": 452
+ curl http://localhost:6333/collections/articles_collection
+ ```
+
+ - If Qdrant vectors exist, SKIP INDEX
+ - Build Qdrant index from Postgres
+  ```
+  python3 build_index.py
+  ```
+  - This should:
+    - fetch all articles from Postgres
+    - embed them with all-minilm
+    - create or recreate the Qdrant collection articles_collection
+    - push all vectors in batches
+ - After those two...
+   - Postgres has full article data
+   - Qdrant has up-to-date embeddings
+   - rag_service.py has everything needed at runtime
+
+  - Optional: sanity check of rag_service
+  ```
+  python3 rag_service.py --question "What kind of tools are recommended for E2E testing?"
+  ```
+
+## Start up the app:
+ - start venv:
+  ```
+  source venv/bin/activate
+  ```
+ - start the app:
+  ```
+  streamlit run streamlit_app.py
+  ```
