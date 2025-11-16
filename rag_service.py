@@ -132,30 +132,30 @@ class RagService:
         # LANGCHAIN: build the RAG generation chain (semantic context still built manually)
         self._build_langchain_chain()
 
+
     # ----------------- utilities -----------------
+
     def _build_langchain_chain(self) -> None:
         """
         LANGCHAIN: Create small chain to turn {question, context} into an answer
         using ChatOllama and prompt template.
 
-        LangChain handles the prompt formatting + LLM call + string parsing.
+        LangChain handles the prompt formatting, LLM call, and string parsing.
         """
         self.llm = ChatOllama(
             model=self.ollama_model,
             base_url=self.ollama_host,
-            temperature=0.2,
+            temperature=0.3,
         )
 
         self.prompt = ChatPromptTemplate.from_template(
-            """
-            You are a helpful assistant that answers questions using ONLY the provided context.
+            """You are a helpful assistant that answers questions using ONLY the provided context.
 
-            - The `context` you receive is already filtered to be relevant.
-            - If `context` is NOT empty, always try to answer the question using it.
-            - Only say "I couldn't find relevant articles." if the context is literally empty or contains no text at all.
-            - If the context is somewhat related but not perfect, give your best answer and clearly state any limits.
-            - If you truly cannot answer from the context, explain what is missing and what information would be needed instead of guessing.
-
+            - Assume the context is already filtered to be relevant.
+            - If the context is non-empty, you MUST try to answer the question from it.
+            - It is better to give a partial, approximate answer that clearly states uncertainty than to say the context is not relevant.
+            - Only say you cannot answer if the context is literally empty or contains no useful text at all.
+            - Do not mention the retrieval or the context mechanism; just answer naturally.
             
             Question:
             {question}
@@ -178,6 +178,16 @@ class RagService:
             | StrOutputParser()
         )
 
+    def _llm_answer_with_context(self, context: str, question: str) -> str:
+        """Run the LLM on a single document context (no retrieval)."""
+        try:
+            out = self.rag_chain.invoke(
+                {"question": question, "context": context}
+            )
+            return out.strip() if isinstance(out, str) else str(out)
+        except Exception:
+            return self._first_sentences(context)
+
     def _short(self, s: str | None, n: int = 320) -> str:
         if not s:
             return ""
@@ -193,7 +203,7 @@ class RagService:
 
     def _regex_for_word(self, term: str) -> str:
         """
-        Case-insensitive word-ish boundary regex that avoids matching substrings inside words.
+        Case-insensitive word-ish boundary that avoids matching substrings inside words.
         Works well for very short topics like 'ai'.
         """
         t = re.escape(term.strip())
@@ -242,7 +252,7 @@ class RagService:
     def _normalize_query(self, q: str) -> dict:
         """
         Strip brand/intent fluff so retrieval focuses on the topical bits.
-        Also returns a keyword list we can use for SQL matching.
+        Also returns a keyword list for SQL matching.
         """
         q0 = (q or "").lower()
 
@@ -250,7 +260,6 @@ class RagService:
         q0 = re.sub(r"[^a-z0-9\s\-]+", " ", q0)
         raw = [t for t in q0.split() if t]
 
-        # remove words that add noise ("bitovi", "recommend", "what", "show", …)
         stop = {
             "bitovi","blog","blogs","article","articles","post","posts",
             "recommend","recommends","recommendation","recommendations",
@@ -263,11 +272,9 @@ class RagService:
         kept = [t for t in raw if t not in stop]
         semantic = " ".join(kept) or q0
 
-        # minimal synonym expansion for keywords
         kws = set(kept)
         joined = " ".join(kept)
 
-        # E2E synonyms
         if "e2e" in kws or ("end" in kws and "to" in kws and "end" in joined):
             kws.update({"e2e", "end-to-end", "end to end"})
             kws.update({"testing", "cypress"})
@@ -275,17 +282,15 @@ class RagService:
         if "testing" in kws or "test" in kws:
             kws.update({"testing", "tests", "qa"})
 
-        # fall back if no keywords found
         if not kws:
             kws = set(raw[:3])
 
         return {"semantic": semantic, "keywords": sorted(kws)}
 
     def _like_patterns(self, words: list[str]) -> list[str]:
-        """For LIKE/ILIKE patterns."""
+        """LIKE/ILIKE patterns."""
         return [f"%{w.lower()}%" for w in words if w and w.strip()]
 
-    
     def _extract_requested_count(self, text: str, default: int = 5) -> int:
         """Respect an explicit number if the user asked for 1/2/3/… results."""
         m = re.search(r'\b(\d{1,3})\b', text)
@@ -294,22 +299,72 @@ class RagService:
         n = max(1, min(50, int(m.group(1))))
         return n
 
-
     # ====== Basic Postgres helper ======
     def _fetch_by_ids(self, ids: List[int]) -> Dict[int, Dict[str, Any]]:
         if not ids:
             return {}
         rows = self.pg.fetchall("SELECT * FROM articles WHERE id = ANY(%s);", (ids,))
         return {int(row["id"]): row for row in rows}
+    
+    def _fetch_single_post_by_date(self, order: str = "desc") -> dict | None:
+        """Fetch a single post ordered by date (published_date, then created_at)."""
+        order_sql = "DESC" if order.lower() == "desc" else "ASC"
+        with self.pg.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, title, url, excerpt, content, author, published_date, created_at
+                FROM articles
+                ORDER BY COALESCE(published_date, created_at) {order_sql}, id {order_sql}
+                LIMIT 1;
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [desc[0] for desc in cur.description]
+            return dict(zip(cols, row))
+
+    def answer_latest_post(self) -> str:
+        post = self._fetch_single_post_by_date(order="desc")
+        if not post:
+            return "I could not find any posts with a published date."
+
+        context = (
+            f"Title: {post['title']}\n"
+            f"URL: {post['url']}\n"
+            f"Published: {post.get('published_date') or post.get('created_at')}\n\n"
+            f"Excerpt: {post.get('excerpt') or ''}\n\n"
+            f"Content: {post.get('content') or ''}"
+        )
+
+        question = "Summarize what the latest blog post is about."
+
+        return self._llm_answer_with_context(context, question)
+
+    def answer_oldest_post(self) -> str:
+        post = self._fetch_single_post_by_date(order="asc")
+        if not post:
+            return "I could not find any posts with a published date."
+
+        context = (
+            f"Title: {post['title']}\n"
+            f"URL: {post['url']}\n"
+            f"Published: {post.get('published_date') or post.get('created_at')}\n\n"
+            f"Excerpt: {post.get('excerpt') or ''}\n\n"
+            f"Content: {post.get('content') or ''}"
+        )
+
+        question = "Summarize what the oldest blog post is about."
+
+        return self._llm_answer_with_context(context, question)
 
     # ====== Public API ======
 
     def oldest_article(self) -> Optional[Retrieved]:
         sql = """
-            SELECT id, title, url, excerpt, author, published_date
+            SELECT id, title, url, excerpt, author, published_date, created_at
             FROM articles
-            WHERE published_date IS NOT NULL
-            ORDER BY published_date ASC, id ASC
+            ORDER BY COALESCE(published_date, created_at) ASC, id ASC
             LIMIT 1;
         """
         r = self.pg.fetchone(sql)
@@ -321,94 +376,98 @@ class RagService:
             url=r["url"],
             excerpt=r.get("excerpt") or "",
             author=r.get("author"),
-            published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+            published_date=r["published_date"].isoformat() if r.get("published_date") else (
+                r["created_at"].isoformat() if r.get("created_at") else None
+            ),
             score=1.0,
             match_reason="oldest",
         )
 
     def oldest_articles(self, n: int = 5) -> List[Retrieved]:
-        # sanitize n to avoid SQL parameter/formatting issues
         n = max(1, min(50, int(n)))
         sql = f"""
-            SELECT id, title, url, excerpt, author, published_date
+            SELECT id, title, url, excerpt, author, published_date, created_at
             FROM articles
-            WHERE published_date IS NOT NULL
-            ORDER BY published_date ASC, id ASC
+            ORDER BY COALESCE(published_date, created_at) ASC, id ASC
             LIMIT {n};
         """
         rows = self.pg.fetchall(sql)
         out: List[Retrieved] = []
         for r in rows:
+            pd = r.get("published_date")
+            cd = r.get("created_at")
+            pd_str = pd.isoformat() if pd else (cd.isoformat() if cd else None)
             out.append(Retrieved(
                 id=int(r["id"]),
                 title=r["title"],
                 url=r["url"],
                 excerpt=r.get("excerpt") or "",
                 author=r.get("author"),
-                published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+                published_date=pd_str,
                 score=1.0,
                 match_reason="oldest",
             ))
         return out
 
-
     def latest_article(self) -> Optional[Retrieved]:
         sql = """
-            SELECT id, title, url, excerpt, author, published_date
+            SELECT id, title, url, excerpt, author, published_date, created_at
             FROM articles
-            WHERE published_date IS NOT NULL
-            ORDER BY published_date DESC
+            ORDER BY COALESCE(published_date, created_at) DESC, id DESC
             LIMIT 1;
         """
         r = self.pg.fetchone(sql)
         if not r:
             return None
+        pd = r.get("published_date")
+        cd = r.get("created_at")
+        pd_str = pd.isoformat() if pd else (cd.isoformat() if cd else None)
         return Retrieved(
             id=int(r["id"]),
             title=r["title"],
             url=r["url"],
             excerpt=r.get("excerpt") or "",
             author=r.get("author"),
-            published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+            published_date=pd_str,
             score=1.0,
             match_reason="latest",
         )
     
     def latest_articles(self, n: int = 5) -> List[Retrieved]:
-        # sanitize n (and inline the integer in LIMIT to avoid % formatting issues)
         n = max(1, min(50, int(n)))
         sql = f"""
-            SELECT id, title, url, excerpt, author, published_date
+            SELECT id, title, url, excerpt, author, published_date, created_at
             FROM articles
-            WHERE published_date IS NOT NULL
-            ORDER BY published_date DESC, id DESC
+            ORDER BY COALESCE(published_date, created_at) DESC, id DESC
             LIMIT {n};
         """
         rows = self.pg.fetchall(sql)
         out: List[Retrieved] = []
         for r in rows:
+            pd = r.get("published_date")
+            cd = r.get("created_at")
+            pd_str = pd.isoformat() if pd else (cd.isoformat() if cd else None)
             out.append(Retrieved(
                 id=int(r["id"]),
                 title=r["title"],
                 url=r["url"],
                 excerpt=r.get("excerpt") or "",
                 author=r.get("author"),
-                published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+                published_date=pd_str,
                 score=1.0,
                 match_reason="latest",
             ))
         return out
 
-
     def list_by_topic_all(self, topic: str) -> List["Retrieved"]:
         """
         Keyword retrieval with reasonable precision:
         - title/excerpt/tags: LIKE ANY(patterns)
-        - content: ONLY when we have at least two keywords -> LIKE ALL(patterns)
-        - Filter out rows that match *only* content(all)
+        - content: ONLY when at least two keywords exist -> LIKE ALL(patterns)
+        - Filter out rows that match only content(all)
         """
         norm = self._normalize_query(topic)
-        patterns = self._like_patterns(norm["keywords"])          # list[str]
+        patterns = self._like_patterns(norm["keywords"])
         use_content_all = len(patterns) >= 2
         content_patterns = patterns if use_content_all else None
 
@@ -438,18 +497,18 @@ class RagService:
                     WHERE lower(tag) LIKE ANY(%s)
                 )
                 {content_where}
-            ORDER BY coalesce(published_date, '1900-01-01') DESC, id DESC;
+            ORDER BY COALESCE(published_date, created_at, '1900-01-01') DESC, id DESC;
         """
 
         if use_content_all:
             params = (
-                patterns, patterns, patterns, content_patterns,  # SELECT fields
-                patterns, patterns, patterns, content_patterns,  # WHERE  fields
+                patterns, patterns, patterns, content_patterns,
+                patterns, patterns, patterns, content_patterns,
             )
         else:
             params = (
-                patterns, patterns, patterns,  # SELECT
-                patterns, patterns, patterns,  # WHERE
+                patterns, patterns, patterns,
+                patterns, patterns, patterns,
             )
 
         rows = self.pg.fetchall(sql, params)
@@ -462,7 +521,6 @@ class RagService:
             m_tags    = bool(r.get("m_tags"))
             m_content = bool(r.get("m_content")) if use_content_all else False
 
-            # Filter: drop rows that matched ONLY content(all)
             if use_content_all and m_content and not (m_title or m_excerpt or m_tags):
                 continue
 
@@ -473,25 +531,26 @@ class RagService:
             if use_content_all and m_content: hits.append("content(all)")
             reason = "keyword(" + ", ".join(hits) + ")" if hits else "keyword"
 
+            pd = r.get("published_date")
+            pd_str = pd.isoformat() if pd else None
+
             out.append(Retrieved(
                 id=int(r["id"]),
                 title=r["title"],
                 url=r["url"],
                 excerpt=r.get("excerpt") or "",
                 author=r.get("author"),
-                published_date=r["published_date"].isoformat() if r.get("published_date") else None,
+                published_date=pd_str,
                 score=1.0,
                 match_reason=reason,
             ))
         return out
 
-
-
     def count_about(self, topic: str) -> int:
         """
         Conservative count:
         - Only title/excerpt/tags (no full content) to avoid overcounting short tokens.
-        - Returns integer count. (Semantic search is used elsewhere just for previews.)
+        - Returns integer count.
         """
         norm = self._normalize_query(topic)
         patterns = self._like_patterns(norm["keywords"])
@@ -514,15 +573,12 @@ class RagService:
     def hybrid_search(self, query: str, top_k: int = 10) -> List[Retrieved]:
         norm = self._normalize_query(query)
 
-        # 1) semantic
         emb = self.embedder.embed(norm["semantic"])
         sem_results = self._qdrant_search(emb, top_k=top_k, score_threshold=self.sim_threshold)
 
-        # 2) keyword (oversample for merge) using the original API name
         kw_rows = self.list_by_topic_all(query)[: top_k * 2]
         kw_by_id = {r.id: r for r in kw_rows}
 
-        # 3) merge
         out: Dict[int, Retrieved] = {}
         for rid, score, payload in sem_results:
             out[rid] = Retrieved(
@@ -546,7 +602,6 @@ class RagService:
         ranked = sorted(out.values(), key=sort_key, reverse=True)
         return ranked[:top_k]
 
-
     def hybrid_answer(self, question: str, top_k: int = 6) -> Dict[str, Any]:
         """
         Default RAG path:
@@ -561,19 +616,24 @@ class RagService:
         snippets = []
         sources = []
         for r in ctx:
-            snippets.append(f"TITLE: {r.title}\nEXCERPT: {r.excerpt}\nURL: {r.url}")
+            content = self._fetch_article_content(r.id) or ""
+            short_body = self._short(content, 500)
+
+            snippets.append(
+                f"TITLE: {r.title}\n"
+                f"EXCERPT: {r.excerpt}\n"
+                f"BODY: {short_body}\n"
+                f"URL: {r.url}"
+            )
             sources.append({"title": r.title, "url": r.url})
 
-        # LANGCHAIN: build a context string for the chain
         context_str = "\n---\n".join(snippets)
 
         try:
-            # LANGCHAIN: call the chain instead of raw _ollama_answer
             ans = self.rag_chain.invoke(
                 {"question": question, "context": context_str}
             ).strip()
 
-            # Guard against "blank bullets"
             lines = [ln for ln in ans.splitlines() if ln.strip() not in {"-", "•"}]
             ans = "\n".join(lines).strip()
             if not ans:
@@ -581,17 +641,14 @@ class RagService:
         except Exception as e:
             log.warning(f"LangChain generation failed or empty, falling back to extractive answer. ({e})")
             bullets = [f"- **{r.title}** — {r.url}" for r in ctx[:6]]
-            ans = "Here is what I found:\n\n" + "\n\n".join(bullets)
-
+            ans = "Here is what was found:\n\n" + "\n\n".join(bullets)
 
         return {"answer": ans.strip(), "sources": sources}
 
     def answer_question(self, question: str) -> Dict[str, Any]:
         q = question.lower().strip()
 
-        # Latest / most recent / newest  (supports single or N results)
         if ("latest" in q) or ("most recent" in q) or ("newest" in q):
-            # Respect an explicit number if present; default to 1 (single article)
             n = self._extract_requested_count(q, default=1)
 
             if n <= 1:
@@ -607,13 +664,12 @@ class RagService:
                 headline = ", ".join(parts) + "."
 
                 wants_summary = ("about" in q) or ("summary" in q)
-                summary_text = self._summary_for(r)  # uses excerpt or LLM fallback
+                summary_text = self._summary_for(r)
                 summary = f"\n\n**Summary:** {summary_text}" if (wants_summary or summary_text) else ""
 
                 ans = f"{headline}{summary}\n\nRead it: {r.url}"
                 return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
 
-            # n >= 2 → list the N most recent
             rows = self.latest_articles(n)
             if not rows:
                 return {"answer": "I couldn't find any articles.", "sources": []}
@@ -632,13 +688,10 @@ class RagService:
             ans = preface + "\n\n" + "\n\n".join(bullets)
             return {"answer": ans, "sources": sources}
 
-
-        # Oldest / earliest / first / least recent
         if (
             ("oldest" in q) or ("earliest" in q) or ("least recent" in q)
             or ("first" in q and "article" in q)
         ):
-            # If user specified a number, list that many; otherwise default to 1 (single)
             n = self._extract_requested_count(q, default=1)
 
             if n <= 1:
@@ -653,7 +706,6 @@ class RagService:
                     parts.append(f"published on {r.published_date[:10]}")
                 headline = ", ".join(parts) + "."
 
-                # mirror latest: show summary if asked, or if we have it
                 wants_summary = ("about" in q) or ("summary" in q)
                 summary_text = self._summary_for(r)
                 summary = f"\n\n**Summary:** {summary_text}" if (wants_summary or summary_text) else ""
@@ -661,7 +713,6 @@ class RagService:
                 ans = f"{headline}{summary}\n\nRead it: {r.url}"
                 return {"answer": ans, "sources": [{"title": r.title, "url": r.url}]}
 
-            # n >= 2 → list the N oldest
             rows = self.oldest_articles(n)
             if not rows:
                 return {"answer": "I couldn't find any articles.", "sources": []}
@@ -679,8 +730,6 @@ class RagService:
             ans = preface + "\n\n" + "\n\n".join(bullets)
             return {"answer": ans, "sources": sources}
 
-
-        # All/About block
         m = re.search(r"all .* about (.+)", q)
         if m:
             topic = m.group(1).strip(" ?.")
@@ -696,26 +745,21 @@ class RagService:
             return {"answer": f"{preface}\n\n" + "\n".join(items),
                     "sources": [{"title": r.title, "url": r.url} for r in rows]}
 
-
-        # Show/List/Find ... (treat "articles" and "posts" the same)
         if (re.search(r'\b(show|list|find|give|display)\b', q)
             and re.search(r'\b(articles?|posts?)\b', q)
             and 'about' in q):
-            # topic after "about"
             topic = re.split(r'\babout\b', q, maxsplit=1)[1].strip(" .?!")
             count = self.count_about(topic)
 
-
-            # how many to show: respect explicit number; default 5
             n = self._extract_requested_count(q, default=5)
 
-            rows = self.list_by_topic_all(topic)   # LEAVE as-is, no internal limiting
+            rows = self.list_by_topic_all(topic)
             if not rows:
                 return {"answer": f"No articles matched “{topic}”.", "sources": []}
 
-            rows = rows[:n]  # only trim here
+            rows = rows[:n]
 
-            preface = f"Here are articles I found related to “{topic}”.\n\n"
+            preface = f"Here are articles related to “{topic}”.\n\n"
             preface += "Matched by keyword across *title, excerpt, content, or tags* (router matched posts/articles)."
 
             bullets, sources = [], []
@@ -731,14 +775,11 @@ class RagService:
             ans = preface + "\n\n" + "\n".join(bullets)
             return {"answer": ans, "sources": sources}
 
-        
-        # Count block
         m = re.search(r"(how many|count).+about (.+)", q)
         if m:
             topic = m.group(2).strip(" ?.")
             n = self.count_about(topic)
 
-            # Show a preview with clean bullets and spacing
             top5 = self.hybrid_search(topic, top_k=5)
             if not top5:
                 return {"answer": f"I found about **{n}** articles related to “{topic}”.", "sources": []}
@@ -756,8 +797,6 @@ class RagService:
             ans = f"I found about **{n}** articles related to “{topic}”.\n\n Here are a few examples:\n\n" + "\n\n".join(bullets)
             return {"answer": ans, "sources": sources}
 
-
-        # Default → hybrid
         return self.hybrid_answer(question, top_k=6)
 
     # ----------------- Internals -----------------
