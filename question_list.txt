@@ -1,7 +1,7 @@
 QUESTIONS:
 
 
-1. What is Bitovi's latest blog post about?
+1. What is the latest blog post about?
 2. Can you show me all Bitovi articles about DevOps?
 3. How many articles does Bitovi have about AI?
 4. "What kind of tools does Bitovi recommend for E2E testing?"

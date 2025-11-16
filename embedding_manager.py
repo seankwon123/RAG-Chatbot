@@ -44,9 +44,9 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         # Test connection and get dimension
         if not self._test_connection():
             raise ConnectionError(f"Failed to connect to Ollama at {base_url}")
-        
-        logger.info(f"✅ Initialized Ollama embedding provider with model: {model}")
-        logger.info(f"📏 Embedding dimension: {self._dimension}")
+
+        logger.info(f"Initialized Ollama embedding provider with model: {model}")
+        logger.info(f"Embedding dimension: {self._dimension}")
     
     def _test_connection(self) -> bool:
         """Test connection to Ollama and get embedding dimension"""
@@ -170,9 +170,9 @@ class EmbeddingManager:
         # Update vector size in config based on actual dimension
         self.config.EMBEDDING_DIMENSION = self.provider.get_dimension()
         
-        logger.info(f"✅ Embedding Manager initialized")
-        logger.info(f"📊 Using model: {self.provider.model}")
-        logger.info(f"📏 Vector dimension: {self.config.EMBEDDING_DIMENSION}")
+        logger.info(f"Embedding Manager initialized")
+        logger.info(f"Using model: {self.provider.model}")
+        logger.info(f"Vector dimension: {self.config.EMBEDDING_DIMENSION}")
     
     def embed_article(self, article: Article) -> List[float]:
         """
@@ -196,7 +196,7 @@ class EmbeddingManager:
             text = article.to_searchable_text()
             texts.append(text)
         
-        logger.info(f"📝 Processing {len(articles)} articles for embedding...")
+        logger.info(f"Processing {len(articles)} articles for embedding...")
         
         # Generate embeddings
         embeddings = self.provider.get_embeddings_batch(texts)
@@ -239,11 +239,11 @@ class EmbeddingManager:
                 "Cloud architecture patterns"
             ]
             
-            print("\n🧪 Testing embeddings...")
+            print("\nTesting embeddings...")
             
             for text in test_texts:
                 embedding = self.provider.get_embedding(text)
-                print(f"  ✅ '{text[:30]}...' -> vector of dimension {len(embedding)}")
+                print(f"  Testing Done'{text[:30]}...' -> vector of dimension {len(embedding)}")
             
             # Test similarity
             vec1 = self.provider.get_embedding("DevOps continuous integration")
@@ -253,7 +253,7 @@ class EmbeddingManager:
             sim1 = self.compute_similarity(vec1, vec2)
             sim2 = self.compute_similarity(vec1, vec3)
             
-            print(f"\n📊 Similarity test:")
+            print(f"\nSimilarity test:")
             print(f"  DevOps vs DevOps CI/CD: {sim1:.3f} (should be high)")
             print(f"  DevOps vs Machine Learning: {sim2:.3f} (should be lower)")
             
@@ -281,7 +281,7 @@ def test_embedding_manager():
             
     except Exception as e:
         print(f"\n❌ Failed to initialize embedding manager: {e}")
-        print("\n💡 Make sure Ollama is running and has an embedding model installed:")
+        print("\n !!! Make sure Ollama is running and has an embedding model installed:")
         print("   1. Check if Ollama is running: curl http://localhost:11434")
         print("   2. Pull an embedding model: ollama pull all-minilm")
         print("   3. Or try: ollama pull mxbai-embed-large")

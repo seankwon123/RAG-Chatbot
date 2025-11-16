@@ -147,11 +147,16 @@ class RagService:
         )
 
         self.prompt = ChatPromptTemplate.from_template(
-            """You are a helpful Bitovi blog assistant.
+            """
+            You are a helpful assistant that answers questions using ONLY the provided context.
 
-            Use ONLY the provided context. Prefer 3 to 6 short bullets when suitable.
-            If there is no relevant context, say: "I couldn't find relevant articles."
+            - The `context` you receive is already filtered to be relevant.
+            - If `context` is NOT empty, always try to answer the question using it.
+            - Only say "I couldn't find relevant articles." if the context is literally empty or contains no text at all.
+            - If the context is somewhat related but not perfect, give your best answer and clearly state any limits.
+            - If you truly cannot answer from the context, explain what is missing and what information would be needed instead of guessing.
 
+            
             Question:
             {question}
 

@@ -107,3 +107,6 @@ creating two scripts
  - scrape_articles.py
   - using beautifulsoup4 and lxml (xml and html python processor)
   - this gets the articles from the blog.
+
+ - build_index.py
+  - 
