@@ -1,0 +1,78 @@
+QUESTIONS:
+
+
+1. What is Bitovi's latest blog post about?
+2. Can you show me all Bitovi articles about DevOps?
+3. How many articles does Bitovi have about AI?
+4. "What kind of tools does Bitovi recommend for E2E testing?"
+
+5. how many articles about cloud architecture?
+
+6. What articles can tell me about CI/CD pipelines?
+7. Show some articles about cloud architecture
+
+8. what kind of tools are recommended for cloud development?
+9. What kind of tools does Bitovi recommend for E2E testing?
+10. What kind of approaches should be used for AI architecture?
+
+11. What are the best steps to take for AI dev?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+----------------
+
+Notes:
+RESOLVED - "show me posts about..." (way less output) "show me articles about..." (way more output) give different output layouts
+ - posts / articles should be the same meaning, I want both to show what comes up for "articles"
+ - What made them different outputs, and why was "posts" stricter?
+        “articles” matched your explicit route and printed every keyword hit.
+        “posts” missed the regex, so it fell through to the hybrid (semantic + LLM) branch, which deliberately returns fewer items.
+ - “posts” and “articles” are synonyms now 
+
+
+
+
+Not Working:
+
+
+"What is the earliest post in the blog?"
+
+"can you show me the five most recent bitovi posts?"
+    only gives the most recent
+
+things about authors

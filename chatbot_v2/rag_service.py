@@ -29,13 +29,6 @@ except Exception:
     EmbeddingManager = None
 
 
-# LANGCHAIN imports
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableMap, RunnablePassthrough
-from langchain_ollama import ChatOllama
-
-
 log = logging.getLogger("rag")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -128,51 +121,8 @@ class RagService:
         self.count_threshold = getattr(self.cfg, "COUNT_THRESHOLD", 0.12)
         self.ollama_host = getattr(self.cfg, "OLLAMA_HOST", os.getenv("OLLAMA_HOST", "http://localhost:11434"))
         self.ollama_model = getattr(self.cfg, "OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1"))
-        
-        # LANGCHAIN: build the RAG generation chain (semantic context still built manually)
-        self._build_langchain_chain()
 
     # ----------------- utilities -----------------
-    def _build_langchain_chain(self) -> None:
-        """
-        LANGCHAIN: Create small chain to turn {question, context} into an answer
-        using ChatOllama and prompt template.
-
-        LangChain handles the prompt formatting + LLM call + string parsing.
-        """
-        self.llm = ChatOllama(
-            model=self.ollama_model,
-            base_url=self.ollama_host,
-            temperature=0.2,
-        )
-
-        self.prompt = ChatPromptTemplate.from_template(
-            """You are a helpful Bitovi blog assistant.
-
-            Use ONLY the provided context. Prefer 3 to 6 short bullets when suitable.
-            If there is no relevant context, say: "I couldn't find relevant articles."
-
-            Question:
-            {question}
-
-            Context:
-            {context}
-
-            Answer:"""
-        )
-
-        self.rag_chain = (
-            RunnableMap(
-                {
-                    "question": RunnablePassthrough(),
-                    "context": RunnablePassthrough(),
-                }
-            )
-            | self.prompt
-            | self.llm
-            | StrOutputParser()
-        )
-
     def _short(self, s: str | None, n: int = 320) -> str:
         if not s:
             return ""
@@ -543,12 +493,6 @@ class RagService:
 
 
     def hybrid_answer(self, question: str, top_k: int = 6) -> Dict[str, Any]:
-        """
-        Default RAG path:
-        - Use hybrid_search for context.
-        - Build readable snippets.
-        - Use LangChain RAG chain to produce an answer from {question, context}.
-        """
         ctx = self.hybrid_search(question, top_k=top_k)
         if not ctx:
             return {"answer": "I couldn't find anything relevant.", "sources": []}
@@ -559,25 +503,26 @@ class RagService:
             snippets.append(f"TITLE: {r.title}\nEXCERPT: {r.excerpt}\nURL: {r.url}")
             sources.append({"title": r.title, "url": r.url})
 
-        # LANGCHAIN: build a context string for the chain
-        context_str = "\n---\n".join(snippets)
+        sys_prompt = (
+            "You are a helpful Bitovi blog assistant. Answer concisely and cite sources.\n"
+            "Use ONLY the provided context. Prefer 3–6 short bullets when suitable.\n"
+            "Precede the bullets with a response similar to “Here are some results I found”, but vary it according to the input. \n"
+            "If there is no relevant context, say: “I couldn't find relevant articles.”\n"
+            "Do NOT output empty bullets.\n\n"
+        )
+        user_prompt = f"QUESTION: {question}\n\nCONTEXT:\n" + "\n---\n".join(snippets) + "\n\nANSWER:"
 
         try:
-            # LANGCHAIN: call the chain instead of raw _ollama_answer
-            ans = self.rag_chain.invoke(
-                {"question": question, "context": context_str}
-            ).strip()
-
-            # Guard against "blank bullets"
-            lines = [ln for ln in ans.splitlines() if ln.strip() not in {"-", "•"}]
+            ans = self._ollama_answer(sys_prompt + user_prompt).strip()
+            # Guard against “blank bullets”
+            lines = [ln for ln in ans.splitlines() if ln.strip() not in {"-", "•", "–"}]
             ans = "\n".join(lines).strip()
             if not ans:
                 raise RuntimeError("Empty answer after cleanup")
         except Exception as e:
-            log.warning(f"LangChain generation failed or empty, falling back to extractive answer. ({e})")
+            log.warning(f"Ollama generation failed or empty, falling back to extractive answer. ({e})")
             bullets = [f"- **{r.title}** — {r.url}" for r in ctx[:6]]
-            ans = "Here is what I found:\n\n" + "\n\n".join(bullets)
-
+            ans = "Here’s what I found:\n\n" + "\n\n".join(bullets)
 
         return {"answer": ans.strip(), "sources": sources}
 
@@ -725,6 +670,7 @@ class RagService:
 
             ans = preface + "\n\n" + "\n".join(bullets)
             return {"answer": ans, "sources": sources}
+
 
         
         # Count block

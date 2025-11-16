@@ -1,7 +1,7 @@
- -- Create articles table to store web articles for RAG chatbot
+-- Run this in Adminer
 
-CREATE TABLE IF NOT EXISTS articles (
-    id SERIAL PRIMARY KEY,              -- Unique identifier
+CREATE TABLE articles (
+    id SERIAL PRIMARY KEY,              -- Auto-incrementing unique identifier
     title VARCHAR(500) NOT NULL,        -- Article headline (max 500 chars)
     url VARCHAR(1000) UNIQUE NOT NULL,  -- Article URL (unique, required)
     content TEXT,                       -- Full article text (unlimited length)
@@ -28,20 +28,16 @@ CREATE INDEX idx_articles_tags ON articles USING GIN(tags);
 
 
 -- Deal with canonical URLs (redirects of older links to new versions)
-ALTER TABLE articles
- ADD COLUMN IF NOT EXISTS url_canonical VARCHAR(1000);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_url_canonical
- ON articles(url_canonical);
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS url_canonical VARCHAR(1000);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_url_canonical ON articles(url_canonical);
 
 
+-- ADD VECCTOR EMBEDDINGS - to add vector search capabilities
+CREATE EXTENTSION IF NOT EXISTS vector;
 
--- -- ADD VECCTOR EMBEDDINGS - to add vector search capabilities
--- CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE articles ADD COLUMN embedding vector(1536);
 
--- ALTER TABLE articles ADD COLUMN embedding vector(1536);
-
--- CREATE INDEX ON articles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON articles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 
 

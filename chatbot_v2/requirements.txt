@@ -4,6 +4,3 @@ sentence-transformers   # text embeddings
 psycopg2-binary         # PostgreSQL database adapter
 python-dotenv           # environment variables
 requests                # API calls
-langchain
-langchain-core
-langchain-ollama
